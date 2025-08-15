@@ -16,7 +16,7 @@ interface AttendanceManagerProps {
 
 const AttendanceManager = ({ onLogout }: AttendanceManagerProps) => {
   const [currentStep, setCurrentStep] = useState<'select' | 'attendance'>('select');
-  const [selectedClass, setSelectedClass] = useState<{ class_id: number | null; class_name: string } | null>(null);
+  const [selectedClass, setSelectedClass] = useState<{ class_id: string; class_name: string } | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [customLessonDates, setCustomLessonDates] = useState<Date[] | null>(null);
   const [studentList, setStudentList] = useState<Student[]>([]);
@@ -24,15 +24,15 @@ const AttendanceManager = ({ onLogout }: AttendanceManagerProps) => {
   const [activeTab, setActiveTab] = useState('attendance');
   const { toast } = useToast();
 
-  const handleClassSelection = async (classData: { class_id: number | null; class_name: string }, month: string, customDates?: Date[]) => {
+  const handleClassSelection = async (classData: { class_id: string; class_name: string }, month: string, customDates?: Date[]) => {
     setSelectedClass(classData);
     setSelectedMonth(month);
     setCustomLessonDates(customDates || null);
     setIsLoadingStudents(true);
 
     try {
-      // Load students - in demo mode this will return empty array for new classes
-      const studentData = classData.class_id ? await students.getAll() : [];
+      // Load students enrolled in this specific class
+      const studentData = await loadStudentsForClass(classData.class_id);
       setStudentList(studentData);
       setCurrentStep('attendance');
     } catch (error) {
@@ -46,12 +46,65 @@ const AttendanceManager = ({ onLogout }: AttendanceManagerProps) => {
     }
   };
 
+  const loadStudentsForClass = async (classId: string): Promise<Student[]> => {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const teacherId = userData?.user?.id;
+      if (!teacherId) throw new Error('User not authenticated');
+
+      // Get students enrolled in this class via lesson_schedules
+      const { data: schedules, error: schedError } = await supabase
+        .from('lesson_schedules')
+        .select('student_id')
+        .eq('class_id', classId);
+
+      if (schedError) throw schedError;
+
+      const studentIds = Array.from(new Set((schedules ?? []).map(s => s.student_id)));
+      
+      if (studentIds.length === 0) {
+        return [];
+      }
+
+      // Get student details
+      const { data: studentData, error: studentError } = await supabase
+        .from('students')
+        .select('id, student_name, parent_email, payment_status, invoice_amount, last_payment_date')
+        .in('id', studentIds)
+        .eq('teacher_id', teacherId)
+        .order('student_name', { ascending: true });
+
+      if (studentError) throw studentError;
+
+      return (studentData ?? []).map((s) => ({
+        student_id: s.id,
+        student_name: s.student_name,
+        parent_email: s.parent_email ?? undefined,
+        payment_status: (s.payment_status ?? null) as any,
+        invoice_amount: (s.invoice_amount ?? null) as any,
+        last_payment_date: (s.last_payment_date ?? null) as any,
+      }));
+    } catch (error) {
+      console.error('Error loading students for class:', error);
+      return [];
+    }
+  };
+
+  const handleTakeAttendanceFromClassManager = async (classData: { class_id: string; class_name: string }) => {
+    // Set current month as default
+    const today = new Date();
+    const currentMonthStr = today.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    
+    await handleClassSelection(classData, currentMonthStr);
+  };
+
   const handleBackToSelection = () => {
     setCurrentStep('select');
     setSelectedClass(null);
     setSelectedMonth('');
     setCustomLessonDates(null);
     setStudentList([]);
+    setActiveTab('attendance');
   };
 
   if (isLoadingStudents) {
@@ -91,7 +144,7 @@ const AttendanceManager = ({ onLogout }: AttendanceManagerProps) => {
             </TabsContent>
 
             <TabsContent value="classes">
-              <ClassManager />
+              <ClassManager onTakeAttendance={handleTakeAttendanceFromClassManager} />
             </TabsContent>
           </Tabs>
         </div>

@@ -8,19 +8,19 @@ export interface User {
 
 /** Supabase uses UUID strings for IDs */
 export interface Class {
-  class_id: string;      // was number | null
+  class_id: string;
   class_name: string;
 }
 
 export type PaymentStatus = 'paid' | 'pending' | 'overdue' | null;
 
 export interface Student {
-  student_id: string;    // already string ✅
+  student_id: string;
   student_name: string;
   parent_email?: string;
-  payment_status: PaymentStatus;          // was optional; make explicit and allow null
-  last_payment_date?: string | null;      // allow null
-  invoice_amount?: number | null;         // allow null
+  payment_status: PaymentStatus;
+  last_payment_date?: string | null;
+  invoice_amount?: number | null;
 }
 
 /**
@@ -28,18 +28,18 @@ export interface Student {
  * We save dates as ISO "YYYY-MM-DD" keys → boolean (present/absent).
  */
 export interface AttendanceRecord {
-  student_id: string;                     // was number
+  student_id: string;
   student_name: string;
   [isoDate: string]: boolean | string | undefined;
 }
 
 export interface AttendanceData {
-  class_id: string;                       // was number | null
+  class_id: string;
   class_name: string;
-  month: string;                          // e.g. "Aug 2025"
-  lesson_dates?: string[];                // ISO dates, e.g. ["2025-08-14", ...]
+  month: string;
+  lesson_dates?: string[];
   data: AttendanceRecord[];
-  user_id?: string;                       // was required; now optional (Supabase uses auth.uid())
+  user_id?: string;
 }
 
 export interface AttendanceResponse {

@@ -103,7 +103,7 @@ const ClassSelector = ({ onSelectionComplete }: ClassSelectorProps) => {
         if (error) throw error;
 
         selectedClass = {
-          class_id: data!.id, // ✅ UUID from DB
+          class_id: data!.id,
           class_name: data!.class_name,
         };
 
@@ -144,7 +144,7 @@ const ClassSelector = ({ onSelectionComplete }: ClassSelectorProps) => {
       }
 
       selectedClass = {
-        class_id: classData.id, // ✅ UUID
+        class_id: classData.id,
         class_name: classData.class_name,
       };
     }

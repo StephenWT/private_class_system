@@ -9,7 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 import StudentManager from './StudentManager';
 
 interface AttendanceGridProps {
-  selectedClass: { class_id: string; class_name: string }; // UUID string
+  selectedClass: { class_id: string; class_name: string };
   selectedMonth: string;                                   // e.g., "Aug 2025"
   customLessonDates?: Date[] | null;                       // optional custom dates
   students: Student[];

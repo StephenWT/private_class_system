@@ -5,15 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import { BookOpen, Plus, Trash2, DollarSign, Users, MoreVertical, X } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { BookOpen, Plus, Trash2, DollarSign, Users, Edit, ArrowRight } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import StudentManager from './StudentManager';
+import { Student } from '@/types';
+import { students as studentsApi } from '@/lib/api';
 
 interface Class {
   id: string;
@@ -23,16 +19,24 @@ interface Class {
   student_count?: number;
 }
 
-const ClassManager = () => {
+interface ClassManagerProps {
+  onTakeAttendance?: (classData: { class_id: string; class_name: string }) => void;
+}
+
+const ClassManager = ({ onTakeAttendance }: ClassManagerProps) => {
   const { toast } = useToast();
   const [classes, setClasses] = useState<Class[]>([]);
   const [isAddingClass, setIsAddingClass] = useState(false);
+  const [editingClass, setEditingClass] = useState<Class | null>(null);
+  const [managingStudentsClass, setManagingStudentsClass] = useState<Class | null>(null);
+  const [students, setStudents] = useState<Student[]>([]);
   const [newClass, setNewClass] = useState({
     class_name: '',
     subject: '',
     hourly_rate: '',
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingStudents, setIsLoadingStudents] = useState(false);
 
   useEffect(() => {
     void loadClasses();
@@ -129,7 +133,50 @@ const ClassManager = () => {
     }
   };
 
+  const updateClass = async () => {
+    if (!editingClass) return;
+
+    const name = editingClass.class_name.trim();
+    if (!name) {
+      toast({
+        title: 'Class name required',
+        description: 'Please enter a class name',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('classes')
+        .update({
+          class_name: name,
+          subject: editingClass.subject?.trim() || null,
+          hourly_rate: editingClass.hourly_rate || null,
+        })
+        .eq('id', editingClass.id);
+
+      if (error) throw error;
+
+      toast({ title: 'Class updated', description: `${name} has been updated successfully` });
+      setEditingClass(null);
+      
+      // Update local state
+      setClasses((prev) => prev.map((c) => (c.id === editingClass.id ? editingClass : c)));
+    } catch (error) {
+      toast({
+        title: 'Error updating class',
+        description: error instanceof Error ? error.message : 'Failed to update class',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const deleteClass = async (classId: string, className: string) => {
+    if (!confirm(`Are you sure you want to delete "${className}"? This will also delete all associated students and attendance records.`)) {
+      return;
+    }
+
     try {
       const { error } = await supabase.from('classes').delete().eq('id', classId);
       if (error) throw error;
@@ -145,47 +192,124 @@ const ClassManager = () => {
     }
   };
 
-  /* ---------- NEW: helpers for Actions menu ---------- */
+  const loadStudentsForClass = async (classId: string) => {
+    setIsLoadingStudents(true);
+    try {
+      // Get students enrolled in this class via lesson_schedules
+      const { data: schedules, error: schedError } = await supabase
+        .from('lesson_schedules')
+        .select('student_id')
+        .eq('class_id', classId);
 
-  const editClassName = async (id: string, current: string) => {
-    const next = prompt('New class name', current)?.trim();
-    if (!next || next === current) return;
-    const { error } = await supabase.from('classes').update({ class_name: next }).eq('id', id);
-    if (error) {
-      toast({ title: 'Could not update name', description: error.message, variant: 'destructive' });
-      return;
+      if (schedError) throw schedError;
+
+      const studentIds = Array.from(new Set((schedules ?? []).map(s => s.student_id)));
+      
+      if (studentIds.length === 0) {
+        setStudents([]);
+        return;
+      }
+
+      // Get student details
+      const { data: studentData, error: studentError } = await supabase
+        .from('students')
+        .select('id, student_name, parent_email, payment_status, invoice_amount, last_payment_date')
+        .in('id', studentIds)
+        .order('student_name', { ascending: true });
+
+      if (studentError) throw studentError;
+
+      const formattedStudents: Student[] = (studentData ?? []).map((s) => ({
+        student_id: s.id,
+        student_name: s.student_name,
+        parent_email: s.parent_email ?? undefined,
+        payment_status: (s.payment_status ?? null) as any,
+        invoice_amount: (s.invoice_amount ?? null) as any,
+        last_payment_date: (s.last_payment_date ?? null) as any,
+      }));
+
+      setStudents(formattedStudents);
+    } catch (error) {
+      toast({
+        title: 'Error loading students',
+        description: error instanceof Error ? error.message : 'Failed to load students',
+        variant: 'destructive',
+      });
+      setStudents([]);
+    } finally {
+      setIsLoadingStudents(false);
     }
-    setClasses((prev) => prev.map((c) => (c.id === id ? { ...c, class_name: next } : c)));
-    toast({ title: 'Class name updated' });
   };
 
-  const editRate = async (id: string, current?: number | null) => {
-    const defaultVal = current != null ? String(current) : '';
-    const nextStr = prompt('New hourly rate (blank to clear)', defaultVal);
-    if (nextStr === null) return; // user cancelled
-    const trimmed = nextStr.trim();
-
-    const next = trimmed === '' ? null : Number(trimmed);
-    if (trimmed !== '' && Number.isNaN(next)) {
-      toast({ title: 'Invalid rate', description: 'Enter a number or leave blank to clear.', variant: 'destructive' });
-      return;
-    }
-
-    const { error } = await supabase.from('classes').update({ hourly_rate: next }).eq('id', id);
-    if (error) {
-      toast({ title: 'Could not update rate', description: error.message, variant: 'destructive' });
-      return;
-    }
-    setClasses((prev) => prev.map((c) => (c.id === id ? { ...c, hourly_rate: next ?? undefined } : c)));
-    toast({ title: 'Hourly rate updated' });
+  const handleManageStudents = async (cls: Class) => {
+    setManagingStudentsClass(cls);
+    await loadStudentsForClass(cls.id);
   };
 
-  /* --------------------------------------------------- */
+  const handleStudentsChange = (updatedStudents: Student[]) => {
+    setStudents(updatedStudents);
+    // Update student count in classes list
+    setClasses(prev => prev.map(c => 
+      c.id === managingStudentsClass?.id 
+        ? { ...c, student_count: updatedStudents.length }
+        : c
+    ));
+  };
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
         <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  // Student management view
+  if (managingStudentsClass) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <Users className="w-6 h-6 text-primary" />
+              Manage Students - {managingStudentsClass.class_name}
+            </h2>
+            <p className="text-muted-foreground">Add, remove, and manage students for this class</p>
+          </div>
+          <div className="flex gap-2">
+            {onTakeAttendance && (
+              <Button
+                onClick={() => onTakeAttendance({ 
+                  class_id: managingStudentsClass.id, 
+                  class_name: managingStudentsClass.class_name 
+                })}
+                className="flex items-center gap-2"
+              >
+                <ArrowRight className="w-4 h-4" />
+                Take Attendance
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={() => setManagingStudentsClass(null)}
+            >
+              Back to Classes
+            </Button>
+          </div>
+        </div>
+
+        {isLoadingStudents ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
+          </div>
+        ) : (
+          <StudentManager
+            students={students}
+            onStudentsChange={handleStudentsChange}
+            classId={managingStudentsClass.id}
+            plannedDatesIso={[]} // Will be set when taking attendance
+          />
+        )}
       </div>
     );
   }
@@ -252,7 +376,7 @@ const ClassManager = () => {
                       setNewClass({ class_name: '', subject: '', hourly_rate: '' });
                     }}
                   >
-                    <X className="w-4 h-4" />
+                    Cancel
                   </Button>
                 </div>
               </CardContent>
@@ -288,32 +412,111 @@ const ClassManager = () => {
                         </div>
                       </div>
 
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
-                            <MoreVertical className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuSeparator />
-                          {/* NEW actions */}
-                          <DropdownMenuItem onClick={() => editClassName(cls.id, cls.class_name)}>
-                            Rename
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => editRate(cls.id, cls.hourly_rate)}>
-                            Edit hourly rate
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() => deleteClass(cls.id, cls.class_name)}
-                            className="text-destructive"
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleManageStudents(cls)}
+                          className="flex items-center gap-2"
+                        >
+                          <Users className="w-4 h-4" />
+                          Manage Students
+                        </Button>
+                        
+                        {onTakeAttendance && (
+                          <Button
+                            size="sm"
+                            onClick={() => onTakeAttendance({ 
+                              class_id: cls.id, 
+                              class_name: cls.class_name 
+                            })}
+                            className="flex items-center gap-2"
                           >
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            Delete Class
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            <ArrowRight className="w-4 h-4" />
+                            Take Attendance
+                          </Button>
+                        )}
+
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEditingClass({ ...cls })}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>Edit Class</DialogTitle>
+                              <DialogDescription>
+                                Update the class information
+                              </DialogDescription>
+                            </DialogHeader>
+                            
+                            {editingClass && (
+                              <div className="space-y-4">
+                                <div className="space-y-2">
+                                  <Label>Class Name *</Label>
+                                  <Input
+                                    value={editingClass.class_name}
+                                    onChange={(e) => setEditingClass({ 
+                                      ...editingClass, 
+                                      class_name: e.target.value 
+                                    })}
+                                  />
+                                </div>
+                                
+                                <div className="space-y-2">
+                                  <Label>Subject</Label>
+                                  <Input
+                                    value={editingClass.subject || ''}
+                                    onChange={(e) => setEditingClass({ 
+                                      ...editingClass, 
+                                      subject: e.target.value 
+                                    })}
+                                  />
+                                </div>
+                                
+                                <div className="space-y-2">
+                                  <Label>Hourly Rate</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={editingClass.hourly_rate || ''}
+                                    onChange={(e) => setEditingClass({ 
+                                      ...editingClass, 
+                                      hourly_rate: e.target.value ? Number(e.target.value) : null 
+                                    })}
+                                  />
+                                </div>
+                                
+                                <div className="flex gap-2">
+                                  <Button onClick={updateClass}>
+                                    Update Class
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => setEditingClass(null)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </DialogContent>
+                        </Dialog>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => deleteClass(cls.id, cls.class_name)}
+                          className="text-destructive hover:text-destructive-foreground hover:bg-destructive"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
